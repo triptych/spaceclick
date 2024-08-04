@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SpaceKlick</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #1a1a2e;
+            color: #e94560;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px;
+            margin: 0;
+            overflow: hidden;
+        }
+        #starfield {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: -1;
+        }
+        #game-container {
+            background-color: rgba(22, 33, 62, 0.8);
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
+            max-width: 600px;
+            width: 100%;
+            z-index: 1;
+        }
+        h1 {
+            text-align: center;
+            color: #0f3460;
+            animation: rainbow 10s linear infinite;
+        }
+        @keyframes rainbow {
+            0% { color: red; }
+            14% { color: orange; }
+            28% { color: yellow; }
+            42% { color: green; }
+            57% { color: blue; }
+            71% { color: indigo; }
+            85% { color: violet; }
+            100% { color: red; }
+        }
+        #asteroid {
+            font-size: 48px;
+            cursor: pointer;
+            user-select: none;
+            transition: transform 0.1s;
+            position: relative;
+        }
+        #asteroid:active {
+            transform: scale(0.95);
+        }
+        .resource {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        #minerals {
+            transition: transform 0.3s ease-out;
+        }
+        .minerals-pulse {
+            animation: pulse 0.3s ease-out;
+        }
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.2); }
+            100% { transform: scale(1); }
+        }
+        .upgrade {
+            background-color: #0f3460;
+            color: #e94560;
+            border: none;
+            padding: 10px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .upgrade:hover {
+            background-color: #16213e;
+        }
+        .upgrade:disabled {
+            background-color: #444;
+            cursor: not-allowed;
+        }
+        .upgrade-info {
+            display: flex;
+            align-items: center;
+        }
+        .upgrade-multiplier {
+            margin-right: 5px;
+            font-weight: bold;
+        }
+        .upgrade-count {
+            margin-left: 10px;
+            font-size: 0.8em;
+        }
+        #save-load {
+            margin-top: 20px;
+            display: flex;
+            justify-content: space-between;
+        }
+        #save-load button {
+            background-color: #0f3460;
+            color: #e94560;
+            border: none;
+            padding: 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        #save-load button:hover {
+            background-color: #16213e;
+        }
+        .particle {
+            position: absolute;
+            pointer-events: none;
+            animation: particle 1s ease-out;
+        }
+        @keyframes particle {
+            0% { transform: translate(0, 0); opacity: 1; }
+            100% { transform: translate(var(--tx), var(--ty)); opacity: 0; }
+        }
+        #progress-container {
+            width: 100%;
+            background-color: #ddd;
+            border-radius: 5px;
+            margin-top: 10px;
+        }
+        #progress-bar {
+            width: 0;
+            height: 10px;
+            background-color: #4CAF50;
+            border-radius: 5px;
+            transition: width 0.1s linear;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="starfield"></canvas>
+    <div id="game-container">
+        <h1>SpaceKlick 🚀</h1>
+        <div id="asteroid">🪨</div>
+        <div id="resources">
+            <div class="resource">
+                <span>Minerals: </span>
+                <span id="minerals">0</span>
+            </div>
+            <div class="resource">
+                <span>Minerals per second: </span>
+                <span id="minerals-per-second">0</span>
+            </div>
+            <div id="progress-container">
+                <div id="progress-bar"></div>
+            </div>
+        </div>
+        <div id="upgrades"></div>
+        <div id="save-load">
+            <button onclick="exportSave()">Export Save</button>
+            <button onclick="importSave()">Import Save</button>
+        </div>
+    </div>
+
+    <script>
+        let gameState = {
+            minerals: 0,
+            upgrades: {},
+            lastUpdate: Date.now()
+        };
+
+        const upgrades = {
+            alien: { cost: 10, multiplier: 0.1, emoji: '👽', name: 'Alien' },
+            station: { cost: 50, multiplier: 0.5, emoji: '🛰️', name: 'Space Station' },
+            battleship: { cost: 200, multiplier: 2, emoji: '🚀', name: 'Battleship' },
+            battleStation: { cost: 1000, multiplier: 10, emoji: '🛸', name: 'Battle Station' },
+            planet: { cost: 5000, multiplier: 50, emoji: '🪐', name: 'Planet' },
+            dysonSphere: { cost: 25000, multiplier: 250, emoji: '☀️', name: 'Dyson Sphere' }
+        };
+
+        const UPDATE_INTERVAL = 100; // milliseconds
+        let lastUpdateTime = Date.now();
+
+        function initializeGame() {
+            const upgradesContainer = document.getElementById('upgrades');
+            for (const [key, upgrade] of Object.entries(upgrades)) {
+                gameState.upgrades[key] = gameState.upgrades[key] || 0;
+                const button = document.createElement('button');
+                button.className = 'upgrade';
+                button.id = `${key}-upgrade`;
+                button.onclick = () => buyUpgrade(key);
+                button.innerHTML = `
+                    <div class="upgrade-info">
+                        <span class="upgrade-multiplier" id="${key}-multiplier">${upgrade.multiplier.toFixed(1)}</span>
+                        <span>${upgrade.emoji} ${upgrade.name} (Cost: ${upgrade.cost})</span>
+                    </div>
+                    <span class="upgrade-count" id="${key}-count">0</span>
+                `;
+                upgradesContainer.appendChild(button);
+            }
+            updateDisplay();
+        }
+
+        function updateDisplay() {
+            const mineralsElement = document.getElementById('minerals');
+            mineralsElement.textContent = Math.floor(gameState.minerals) || 0;
+            mineralsElement.classList.add('minerals-pulse');
+            setTimeout(() => mineralsElement.classList.remove('minerals-pulse'), 300);
+
+            const mineralsPerSecond = calculateMineralsPerSecond();
+            document.getElementById('minerals-per-second').textContent = 
+                isNaN(mineralsPerSecond) ? '0.0' : mineralsPerSecond.toFixed(1);
+            
+            for (const [key, upgrade] of Object.entries(upgrades)) {
+                const button = document.getElementById(`${key}-upgrade`);
+                button.disabled = gameState.minerals < upgrade.cost;
+                document.getElementById(`${key}-count`).textContent = gameState.upgrades[key] || 0;
+                document.getElementById(`${key}-multiplier`).textContent = upgrade.multiplier.toFixed(1);
+                document.querySelector(`#${key}-upgrade .upgrade-info span:last-child`).textContent = 
+                    `${upgrade.emoji} ${upgrade.name} (Cost: ${Math.floor(upgrade.cost)})`;
+            }
+        }
+
+        function calculateMineralsPerSecond() {
+            return Object.entries(upgrades).reduce((total, [key, upgrade]) => 
+                total + (gameState.upgrades[key] || 0) * upgrade.multiplier, 0);
+        }
+
+        function clickAsteroid() {
+            gameState.minerals += 1;  // Only add 1 mineral per click
+            updateDisplay();
+            createParticles();
+        }
+
+        function createParticles() {
+            const asteroid = document.getElementById('asteroid');
+            for (let i = 0; i < 5; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                particle.textContent = '💎';
+                particle.style.setProperty('--tx', `${Math.random() * 100 - 50}px`);
+                particle.style.setProperty('--ty', `${Math.random() * -100 - 50}px`);
+                asteroid.appendChild(particle);
+                setTimeout(() => particle.remove(), 1000);
+            }
+        }
+
+        function buyUpgrade(upgradeType) {
+            const upgrade = upgrades[upgradeType];
+            if (gameState.minerals >= upgrade.cost) {
+                gameState.minerals -= upgrade.cost;
+                gameState.upgrades[upgradeType]++;
+                upgrade.cost = Math.ceil(upgrade.cost * 1.15);
+                updateDisplay();
+            }
+        }
+
+        function saveGame() {
+            localStorage.setItem('spaceKlickSave', JSON.stringify(gameState));
+        }
+
+        function loadGame() {
+            const savedGame = localStorage.getItem('spaceKlickSave');
+            if (savedGame) {
+                try {
+                    const loadedState = JSON.parse(savedGame);
+                    gameState = {
+                        minerals: Number(loadedState.minerals) || 0,
+                        upgrades: loadedState.upgrades || {},
+                        lastUpdate: Date.now()
+                    };
+                    // Ensure all upgrades are initialized
+                    for (const key in upgrades) {
+                        gameState.upgrades[key] = gameState.upgrades[key] || 0;
+                    }
+                } catch (error) {
+                    console.error("Error loading game:", error);
+                    gameState = {
+                        minerals: 0,
+                        upgrades: {},
+                        lastUpdate: Date.now()
+                    };
+                }
+                updateDisplay();
+            }
+        }
+
+        function exportSave() {
+            const saveData = btoa(JSON.stringify(gameState));
+            const blob = new Blob([saveData], { type: 'text/plain' });
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = 'spaceKlickSave.txt';
+            a.click();
+        }
+
+        function importSave() {
+            const input = document.createElement('input');
+            input.type = 'file';
+            input.accept = '.txt';
+            input.onchange = e => {
+                const file = e.target.files[0];
+                const reader = new FileReader();
+                reader.onload = event => {
+                    try {
+                        const loadedState = JSON.parse(atob(event.target.result));
+                        gameState = {
+                            minerals: Number(loadedState.minerals) || 0,
+                            upgrades: loadedState.upgrades || {},
+                            lastUpdate: Date.now()
+                        };
+                        updateDisplay();
+                        alert('Save file imported successfully!');
+                    } catch (error) {
+                        alert('Invalid save file!');
+                    }
+                };
+                reader.readAsText(file);
+            };
+            input.click();
+        }
+
+        function updateProgressBar() {
+            const now = Date.now();
+            const timeSinceLastUpdate = now - lastUpdateTime;
+            const progress = (timeSinceLastUpdate / UPDATE_INTERVAL) * 100;
+            document.getElementById('progress-bar').style.width = `${Math.min(progress, 100)}%`;
+        }
+
+        function gameLoop() {
+            const now = Date.now();
+            const deltaTime = (now - gameState.lastUpdate) / 1000;
+            gameState.lastUpdate = now;
+
+            const mineralsToAdd = deltaTime * calculateMineralsPerSecond();
+            gameState.minerals += isNaN(mineralsToAdd) ? 0 : mineralsToAdd;
+
+            updateDisplay();
+            updateProgressBar();
+            saveGame();
+
+            if (now - lastUpdateTime >= UPDATE_INTERVAL) {
+                lastUpdateTime = now;
+            }
+        }
+
+        // Starfield
+        const canvas = document.getElementById('starfield');
+        const ctx = canvas.getContext('2d');
+        let stars = [];
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            initStars();
+        }
+
+        function initStars() {
+            stars = [];
+            for (let i = 0; i < 100; i++) {
+                stars.push({
+                    x: Math.random() * canvas.width,
+                    y: Math.random() * canvas.height,
+                    size: Math.random() * 2 + 1,
+                    speed: Math.random() * 50 + 20,
+                    color: `hsl(${Math.random() * 360}, 100%, 90%)`
+                });
+            }
+        }
+
+        function drawStars() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            stars.forEach(star => {
+                ctx.fillStyle = star.color;
+                ctx.beginPath();
+                ctx.arc(star.x, star.y, star.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        function updateStars(deltaTime) {
+            stars.forEach(star => {
+                star.x -= star.speed * deltaTime;
+                if (star.x < 0) {
+                    star.x = canvas.width;
+                    star.y = Math.random() * canvas.height;
+                }
+            });
+        }
+
+        function animate() {
+            const now = Date.now();
+            const deltaTime = (now - gameState.lastUpdate) / 1000;
+            gameState.lastUpdate = now;
+
+            updateStars(deltaTime);
+            drawStars();
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        animate();
+
+        document.getElementById('asteroid').addEventListener('click', clickAsteroid);
+        initializeGame();
+        loadGame();
+        setInterval(gameLoop, 16); // Roughly 60 FPS
+    </script>
+</body>
+</html>
